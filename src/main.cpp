@@ -13,7 +13,7 @@
 #include <ArduinoJson.h>
 #include <Adafruit_MCP9808.h>
 // 自己管的部分
-#include <MFRC522_I2C.h>
+#include <Wiegand.h>
 #include <buzzer.h>
 #include <screen.h>
 #include <define.h>
@@ -29,7 +29,7 @@ Screen scr = Screen(LCD_CS, LCD_RST, LCD_SCK, LCD_MISO, LCD_MOSI);
 Adafruit_MCP9808 tempSensor;
 Setting setting;
 String eth_ip, eth_mac;
-MFRC522 mfrc522(0x28, 0x28);
+WIEGAND wg;
 File RFID_DATA;
 Buzzer buzzer = Buzzer(BEEPER,PWMCHANNEL,RESOLUTION);
 unsigned long lock_countdown=0;
@@ -270,7 +270,6 @@ void setup()
   
   scr.bootDrawStatu("設定RFID");
   vTaskDelay(100);
-  mfrc522.PCD_Init();
 
   scr.bootDrawStatu("設定溫度傳感器");
   vTaskDelay(100);
@@ -641,12 +640,12 @@ void loop()
     isConnectEMS = true;
   }
 
-  if ( !mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial() || !isConnected || isLocked) {
+  if ( !wg.available() || !isConnected || isLocked) {
     delay(50);
     return;
   }
 
-  String card_uuid = mfrc522.GetCardIdString();
+  String card_uuid = String(wg.getCode(),HEX);
   log_e("Card ID: %s", card_uuid);
   bool checked = false;
   for (int x=0; x<10; x++) {
