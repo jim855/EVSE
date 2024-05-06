@@ -46,7 +46,10 @@
 
 #define EMERGENCY_STOP 20
 
+#define DISCONNECT_INTERVAL 100
+
 struct Setting {
   String name;
   String validTag[10];
 };
+

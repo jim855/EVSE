@@ -14,12 +14,18 @@ class Screen {
         void normalDrawFrame(String mac, String ip, String position);
         void normalDrawConcurrentVoltage(double voltage);
         void normalDrawConcurrentAmp(double amp);
+        void normalDrawConcurrentWatts(double watts);
+        void normalDrawTotalWatts(double watts);
+        void normalDrawTemp(double temp);
+
         void normalDrawPlugStatus(String status);
         void normalDrawDateTime(String date, String time);
-        void normalDrawConcurrentWalts(double walts);
+        
         void normalDrawDateTime();
         void normalDrawDeviceStatus(bool locked, unsigned long count);
-    
+        void normalDrawDeviceWait();
+        void normalDrawDeviceMessage(String message, bool isError);
+        
     private:
         Adafruit_RA8875 _tft;
         U8G2_FOR_ADAFRUIT_GFX _u8g2;

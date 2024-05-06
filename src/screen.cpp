@@ -295,36 +295,60 @@ void Screen::normalDrawFrame(String mac, String ip, String position)
 void Screen::normalDrawConcurrentVoltage(double voltage)
 {
     memorytolayer(2);
-    _tft.fillRect(310, 48, 170, 36, RA8875_BLACK);
+    _tft.fillRect(310, 48, 170, 24, RA8875_BLACK);
     _u8g2.setForegroundColor(RA8875_WHITE);
     _u8g2.setBackgroundColor(RA8875_BLACK);
     _u8g2.setFont(cht_font_24);
-    _u8g2.setCursor(250, 84);
+    _u8g2.setCursor(250, 72);
     _u8g2.print("電壓: " + String(voltage) + " V");
     btememorycopy(2,0,0,1,0,0,480,272);
 }
 void Screen::normalDrawConcurrentAmp(double amp)
 {
     memorytolayer(2);
-    _tft.fillRect(310, 84, 170, 36, RA8875_BLACK);
+    _tft.fillRect(310, 72, 170, 24, RA8875_BLACK);
+    _u8g2.setForegroundColor(RA8875_WHITE);
+    _u8g2.setBackgroundColor(RA8875_BLACK);
+    _u8g2.setFont(cht_font_24);
+    _u8g2.setCursor(250, 96);
+    _u8g2.print("電流: " + String(amp) + " A");
+    btememorycopy(2,0,0,1,0,0,480,272);
+}
+void Screen::normalDrawConcurrentWatts(double watts)
+{
+    memorytolayer(2);
+    _tft.fillRect(310, 96, 170, 24, RA8875_BLACK);
     _u8g2.setForegroundColor(RA8875_WHITE);
     _u8g2.setBackgroundColor(RA8875_BLACK);
     _u8g2.setFont(cht_font_24);
     _u8g2.setCursor(250, 120);
-    _u8g2.print("電流: " + String(amp) + " A");
+    _u8g2.print("充電度數: " + String(watts) + " kwh");
     btememorycopy(2,0,0,1,0,0,480,272);
 }
-void Screen::normalDrawConcurrentWalts(double walts)
+
+void Screen::normalDrawTotalWatts(double watts)
 {
     memorytolayer(2);
-    _tft.fillRect(310, 120, 170, 36, RA8875_BLACK);
+    _tft.fillRect(310, 120, 170, 24, RA8875_BLACK);
     _u8g2.setForegroundColor(RA8875_WHITE);
     _u8g2.setBackgroundColor(RA8875_BLACK);
     _u8g2.setFont(cht_font_24);
-    _u8g2.setCursor(250, 156);
-    _u8g2.print("度數: " + String(walts) + " kWh");
+    _u8g2.setCursor(250, 148);
+    _u8g2.print("總度數: " + String(watts) + " kwh");
     btememorycopy(2,0,0,1,0,0,480,272);
 }
+
+void Screen::normalDrawTemp(double temp) {
+    memorytolayer(2);
+    _tft.fillRect(310, 148, 170, 24, RA8875_BLACK);
+    _u8g2.setForegroundColor(RA8875_WHITE);
+    _u8g2.setBackgroundColor(RA8875_BLACK);
+    _u8g2.setFont(cht_font_24);
+    _u8g2.setCursor(250, 172);
+    _u8g2.print("目前溫度: " + String(temp));
+    btememorycopy(2,0,0,1,0,0,480,272);
+}
+
 void Screen::normalDrawPlugStatus(String status)
 {
     memorytolayer(2);
@@ -346,17 +370,17 @@ void Screen::normalDrawDateTime()
         return;
     }
     char buf[20];
-    _tft.fillRect(310, 156, 170, 72, RA8875_BLACK);
+    _tft.fillRect(310, 188, 170, 48, RA8875_BLACK);
     _u8g2.setForegroundColor(RA8875_WHITE);
     _u8g2.setBackgroundColor(RA8875_BLACK);
     _u8g2.setFont(cht_font_24);
 
     strftime(buf, 20, "%Y/%m/%d", &timeinfo);
-    _u8g2.setCursor(250, 188);
+    _u8g2.setCursor(250, 212);
     _u8g2.print(String(buf));
 
     strftime(buf, 20, "%H:%M:%S", &timeinfo);
-    _u8g2.setCursor(250, 212);
+    _u8g2.setCursor(250, 236);
     _u8g2.print(String(buf));
     btememorycopy(2,0,0,1,0,0,480,272);
 }
@@ -380,7 +404,7 @@ void Screen::normalDrawDeviceStatus(bool locked, unsigned long count) {
     else 
     {
         _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
-        _u8g2.setForegroundColor(RA8875_BLACK);
+        _u8g2.setForegroundColor(RA8875_GREEN);
         _u8g2.setBackgroundColor(RA8875_CYAN);
         _u8g2.setFont(cht_font_32);
         _u8g2.setCursor(10, 92);
@@ -392,6 +416,30 @@ void Screen::normalDrawDeviceStatus(bool locked, unsigned long count) {
         _u8g2.setCursor(10, 132);
         _u8g2.print("鎖定倒數: " + String(count) + " 秒");
     }
+    btememorycopy(2,0,0,1,0,0,480,272);
+}
+
+void Screen::normalDrawDeviceWait() {
+    memorytolayer(2);
+    _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
+    _u8g2.setForegroundColor(RA8875_RED);
+    _u8g2.setBackgroundColor(RA8875_CYAN);
+    _u8g2.setFont(cht_font_32);
+    _u8g2.setCursor(10, 92);
+    _u8g2.print("電樁暫時無法使用");
+    _tft.fillRect(0, 96, 240, 48, RA8875_CYAN);
+    _u8g2.setForegroundColor(RA8875_BLACK);
+    _u8g2.setBackgroundColor(RA8875_CYAN);
+    _u8g2.setFont(cht_font_24);
+    _u8g2.setCursor(10, 132);
+    _u8g2.print("等待更新紀錄");
+    btememorycopy(2,0,0,1,0,0,480,272);
+}
+
+
+void Screen::normalDrawDeviceMessage(String message, bool isError) {
+    memorytolayer(2);
+
     btememorycopy(2,0,0,1,0,0,480,272);
 }
 

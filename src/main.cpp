@@ -11,15 +11,22 @@
 #include <uri/UriRegex.h>
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
+#include <Adafruit_MCP9808.h>
 // 自己管的部分
 #include <MFRC522_I2C.h>
 #include <buzzer.h>
 #include <screen.h>
 #include <define.h>
 #include <utils.h>
+#include <records.h>
+
+// Controller Version
+String controllerVersion = "1.0.0-20131205";
+// Controller Version
 
 RapiSender rapiSender(&RAPI_PORT);
 Screen scr = Screen(LCD_CS, LCD_RST, LCD_SCK, LCD_MISO, LCD_MOSI);
+Adafruit_MCP9808 tempSensor;
 Setting setting;
 String eth_ip, eth_mac;
 MFRC522 mfrc522(0x28, 0x28);
@@ -28,43 +35,77 @@ Buzzer buzzer = Buzzer(BEEPER,PWMCHANNEL,RESOLUTION);
 unsigned long lock_countdown=0;
 uint32_t next_status = 0;
 
-double lastVolts=-1, lastAmps=-1, lastWalts=-1;
-   
+double lastVolts=-1, lastAmps=-1, lastWalts=-1, maxAmps = -1;
+double lastSessionWatts = -1, lastTotalWatts = -1;
+
 unsigned long epochValidUntil=0;
 
+bool isCharging = false, lastIsCharging = false;
+bool isConnected = false, lastIsConnected = false;
+bool isConnectEMS = false;
+String lastAuthenCard = "";
+String evseVersion = "", evseProtocol="";
+bool isLocked = true;
 WebServer server(80);
 
+LocalRecords locRec;
+ChargeRecord lastRecord;
+unsigned long lastConnectTime=0;
+
 void IRAM_ATTR EM() {
-    // rapiSender.sendCmd("$FD");
-    // log_e("SHUT DOWN EVSE!!!!");
+  /*
+  rapiSender.sendCmd("$FD");
+  log_e("SHUT DOWN EVSE!!!!");
+  vTaskDelay(5000);
+  ESP.restart();
+  */
 }
 
 void apiHandleOn() {
   rapiSender.sendCmd("$FE");
+  log_e("form EMS: 允許充電");
   server.send(200, F("application/json"), F("{ \"eves_status\": \"On\" }"));
 }
 
 void apiHandleOff() {
   rapiSender.sendCmd("$FD");
+  log_e("form EMS: 停止充電");
   server.send(200, F("application/json"), F("{ \"eves_status\": \"Off\" }"));
 
 }
 
 void apiHandleInfo() {
+  String result = "{";
+  result = result + "\"amps\":" + String(lastAmps) + ",";
+  result = result + "\"volts\":" + String(lastVolts) + ",";
+  result = result + "\"maxapms\":" + String(maxAmps) + ",";
+  result = result + "\"charging\":\"" + (lastIsCharging? "true":"false") + "\","; 
+  result = result + "\"plugged\":\"" + (lastIsConnected ? "true": "false") + "\","; 
+  result = result + "\"locked\":\"" + (isLocked ? "true": "false") + "\",";
+  result = result + "\"card\":\"" + lastAuthenCard + "\",";
+  result = result + "\"hostname\":\"" + setting.name + "\",";
+  result = result + "\"ipaddr\":\"" + eth_ip + "\",";
+  result = result + "\"mac\":\"" + eth_mac + "\",";
+  result = result + "\"evseVersion\":\"" + evseVersion + "\",";
+  result = result + "\"evseProtocol\":\"" + evseProtocol + "\",";
+  result = result + "\"controllerVersion\":\"" + controllerVersion + "\"";
+  result = result + "}";
 
+  server.send(200, F("application/json"), result);
 }
 
 void apiAuth() {
   String cardUuid = server.pathArg(0);
-  log_e("Authen by CardID: %s", cardUuid);
+  log_e("Form EMS : Authen by CardID: %s", cardUuid);
   rapiSender.sendCmd("$S4 0");
   server.send(200, F("application/json"), F("{ \"auth_status\": \"Unlocked\" }"));
-  epochValidUntil = getTime() + 180;
+  epochValidUntil = (millis()/1000) + 180;
 }
 
 void apiUnauth() {
-  String cardUuid = server.pathArg(0);
-  log_e("Authen by CardID: %s", cardUuid);
+  //String cardUuid = server.pathArg(0);
+  //log_e("Authen by CardID: %s", cardUuid);
+  log_e("Form EMS : card_auth is failed");
   rapiSender.sendCmd("$S4 1");
   epochValidUntil = 0;
   server.send(200, F("application/json"), F("{ \"auth_status\": \"Locked\" }"));
@@ -85,7 +126,7 @@ void apiHandleGetVolts() {
 void apiHandleAmp() {
   //String user = server.pathArg(0);
   String amps = server.pathArg(0);
-  log_e("Turn Amp to %s", amps);
+  log_e("From EMS : Turn Amp to %s", amps);
   String cmd = "$SC "+ amps + " V";
   rapiSender.sendCmd(cmd);
   server.send(200, F("application/json"), F("{ \"message\": \"done\" }"));
@@ -95,9 +136,13 @@ void apiHandleClearConfig() {
   SPIFFS.begin(true);
   if (SPIFFS.exists("/setting")) {
     SPIFFS.remove("/setting");
+    log_e("Form EMS : Clear config");
   }
   SPIFFS.end();
   server.send(200, F("application/json"), F("{ \"message\": \"done\" }"));
+  log_e("Delay 5 secs to reboot");
+  vTaskDelay(5000);
+  ESP.restart();
 }
 
 void apiHandleListTags() {
@@ -110,11 +155,12 @@ void apiHandleListTags() {
     } else {
       log_e("[ListTag] Tag %d is %s", x, setting.validTag[x]);
       tags[cnt] = "\"" + setting.validTag[x] + "\"";
+      cnt++;
     }
   }
   String result= "[";
   for (int x=0; x<cnt; x++) {
-    result = result + tags[cnt];
+    result = result + tags[x];
     if (x!=cnt-1) {
       result = result + ",";
     }
@@ -135,6 +181,7 @@ void apiHandleAddTag() {
     realCnt++;
   }
   writeConfig();
+  log_e("Form EMS : AddTag , CardID: %s", uuid);
   server.send(200, F("application/json"), F("{ \"message\": \"done\" }"));
 }
 
@@ -148,6 +195,7 @@ void apiHandleDelTag() {
     }
   }
   writeConfig();
+  log_e("Form EMS : DelTag , CardID: %s", uuid);
   server.send(200, F("application/json"), F("{ \"message\": \"done\" }"));
 }
 
@@ -155,7 +203,18 @@ void apiHandleSetName() {
   String name = server.pathArg(0);
   setting.name = name;
   writeConfig();
+  log_e("Form EMS : SetName , Name: %s", name);
   server.send(200, F("application/json"), F("{ \"message\": \"done\" }"));
+  vTaskDelay(5000);
+  ESP.restart();
+}
+
+void apiHandleRecord() {
+  rapiSender.sendCmd("$FE");
+  log_e("[Record] Enabled by flush records");
+  locRec.dumpRecords();
+  lastConnectTime = (millis()/1000);
+  server.send(200, F("application/json"), locRec.getJsonRecords());
 }
 
 void setup()
@@ -166,7 +225,7 @@ void setup()
     delay(500);
   scr.begin(RA8875_480x272);
 
-  rapiSender.sendCmd("$FE");
+  //rapiSender.sendCmd("$FD");
   rapiSender.sendCmd("$S4 1");
 
   scr.bootDrawFrame();
@@ -183,13 +242,14 @@ void setup()
   vTaskDelay(1000);
   buzzer.begin();
   buzzer.Success();
-  
+
+
   int count = 0;
   scr.bootDrawStatu("設定序列通訊");
   vTaskDelay(1000);
   Wire.begin(RFID_SDA, RFID_SCL);
   log_e("[Setup] Starting I2C scan:");
-  for (byte i = 0; i < 128; i++)
+  for (byte i = 8; i < 128; i++)
   {
     Wire.beginTransmission(i);       // Begin I2C transmission Address (i)
     byte error = Wire.endTransmission();
@@ -205,38 +265,71 @@ void setup()
   vTaskDelay(1000);
   mfrc522.PCD_Init();
 
-  ///////////////////////////////////////////////////////////
-  // if (mfrc522.PCD_PerformSelfTest()) {
-  //   log_e("RFID Self Test pass");
-  // } else {
-  //   log_e("RFID Self Test failed");
-  // }
-  // mfrc522.PCD_AntennaOn();
-  
-  // log_e("RFID Antenna GAIN: %d", mfrc522.PCD_GetAntennaGain());
-  // //////////////////////////////////////////////////////////////
+  scr.bootDrawStatu("設定溫度傳感器");
+  vTaskDelay(1000);
+  tempSensor.begin();
 
   digitalWrite(LED1,LOW);
   digitalWrite(LED2,LOW);
   
-  scr.bootDrawStatu("設定網路卡");
-  vTaskDelay(1000);
+  // 預先處理 mac
   uint64_t chipId = ESP.getEfuseMac();
   byte mac[] = {0xDE, 0xAD, 0xBE, 0, 0, 0};
-  log_e("[Setup] ESP32 WiFi Mac: %012llx", chipId);
   mac[5] = 0xFF & (chipId >> 24);
   mac[4] = 0xFF & (chipId >> 32);
   mac[3] = 0xFF & (chipId >> 40);
+  char hostname[12];
+  sprintf(hostname, "EVSE_%02x%02x%02x", mac[3], mac[4], mac[5]);
+
+  scr.bootDrawStatu("設定檔案系統");
+  vTaskDelay(1000);
+  log_e("[Setup] SPIFFS Init");
+  if (!SPIFFS.begin(true)) {
+    log_e("[Setup] SPIFFS failed");
+    return;
+  }
+  log_e("[Setup] SPIFFS Inited");
+  
+  scr.bootDrawStatu("讀取設定值");
+  vTaskDelay(1000);
+  if (!SPIFFS.exists("/setting")) {
+    // First time;
+    log_e("[Setup] Init setting files");
+    char buf[5];
+    setting.name = hostname;
+    File settingFile = SPIFFS.open("/setting", "wb+");
+    if (!settingFile) {
+      log_e("[Setup] Setting file open failed");
+      return;
+    }
+    settingFile.write((byte*) &setting, sizeof(setting));
+    settingFile.close();
+  } 
+  log_e("[Setup] Read setting file");
+  File settingFile = SPIFFS.open("/setting", "rb");
+
+  settingFile.readBytes((char*) &setting, sizeof(setting));
+  settingFile.close();
+  log_e("[Setup] Hostname: %s", setting.name);
+  
+  SPIFFS.end();
+
+  locRec.init();
+  locRec.readFile();
+
+  scr.bootDrawStatu("設定網路卡");
+  vTaskDelay(1000);
+
+  log_e("[Setup] ESP32 WiFi Mac: %012llx", chipId);
   log_e("[Setup] W5500 Mac: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   log_e("[Setup] W5500 Init");
   
   ESP32_W5500_onEvent();
   log_e("[Setup] W5500 onEvent done");
   ETH.begin(ETH_MISO, ETH_MOSI, ETH_SCK, ETH_CS, ETH_INT, 25, 2, mac);
-  char hostname[12];
-  sprintf(hostname, "EVSE_%02x%02x%02x", mac[3], mac[4], mac[5]);
-  log_e("[Setup] Hostname: %s", hostname);
-  ETH.setHostname(hostname);
+  
+  log_e("[Setup] Hostname: %s", setting.name);
+  ETH.setHostname((setting.name.c_str()));
   log_e("[Setup] W5500 begin done");
 
   scr.bootDrawStatu("取得IP....");
@@ -252,54 +345,16 @@ void setup()
   log_e("[Setup] \tDNS: %s", IpAddress2String(ETH.dnsIP()));
 
   scr.bootDrawStatu("起始網路對時");
-  configTime(28800, 3600, "time.stdtime.gov.tw");
+  //configTime(28800, 3600, "time.stdtime.gov.tw");
   vTaskDelay(1000);
 
-
-  scr.bootDrawStatu("設定檔案系統");
-  vTaskDelay(1000);
-  log_e("[Setup] SPIFFS Init");
-  if (!SPIFFS.begin(true)) {
-    log_e("[Setup] SPIFFS failed");
-    return;
-  }
-  log_e("[Setup] SPIFFS Inited");
-  
-
-  scr.bootDrawStatu("讀取設定值");
-  vTaskDelay(1000);
-  if (!SPIFFS.exists("/setting")) {
-    // First time;
-    log_e("[Setup] Init setting files");
-    char buf[5];
-    setting.name = buf;
-    //setting.name = hostname;
-    File settingFile = SPIFFS.open("/setting", "wb+");
-    if (!settingFile) {
-      log_e("[Setup] Setting file open failed");
-      return;
-    }
-    settingFile.write((byte*) &setting, sizeof(setting));
-    settingFile.close();
-  } 
-    log_e("[Setup] Read setting file");
-    File settingFile = SPIFFS.open("/setting", "rb");
-
-    settingFile.readBytes((char*) &setting, sizeof(setting));
-    settingFile.close();
-
-    log_e("[Setup] Hostname: %s", setting.name);
-  
-  SPIFFS.end();
-  
-
-  
   scr.bootDrawStatu("起始服務綁定");
   vTaskDelay(1000);
 
   server.on(F("/turnOff"), apiHandleOff);
   server.on(F("/turnOn"), apiHandleOn);
   server.on(F("/info"), apiHandleInfo);
+  server.on(F("/record"), apiHandleRecord);
 
   server.on(UriBraces("/auth/{}"), apiAuth);
   server.on(F("/unauth"), apiUnauth);
@@ -312,23 +367,22 @@ void setup()
   server.on(UriBraces("/addTag/{}"), apiHandleAddTag);
   server.on(UriBraces("/delTag/{}"), apiHandleDelTag);
   server.on(UriBraces("/setName/{}"), apiHandleSetName);
+
+
   server.on(F("/clearConfig"), apiHandleClearConfig);
   server.begin();
-
-  
 
   scr.bootDrawStatu("起始緊急開關綁定");
   vTaskDelay(1000);
   pinMode(BUTTON_1, INPUT_PULLDOWN);
   attachInterrupt(digitalPinToInterrupt(BUTTON_1), EM, RISING);
   
-
   scr.bootDrawDone();
   vTaskDelay(2000);
   // Normal mode
   scr.normalDrawFrame(eth_mac, eth_ip, setting.name);
   buzzer.Success();
-  //mfrc522.PCD_Reset();
+
 }
 
 void loop()
@@ -355,15 +409,22 @@ void loop()
           }
           String state_msg;
           bool failed = false;
+          isCharging = false;
           switch (evse_state) {
             case OPENEVSE_STATE_STARTING:
               state_msg = "開機中...."; break;
             case OPENEVSE_STATE_NOT_CONNECTED:
-              state_msg = "車輛未連接"; break;
+              state_msg = "車輛未連接"; 
+              isConnected = false;
+              break;
             case OPENEVSE_STATE_CONNECTED:
-              state_msg = "車輛已連接"; break;
+              state_msg = "車輛已連接"; 
+              isConnected = true;
+              break;
             case OPENEVSE_STATE_CHARGING:
-              state_msg = "車輛充電中"; break;
+              state_msg = "車輛充電中"; 
+              isCharging = true;
+              break;
             case OPENEVSE_STATE_VENT_REQUIRED:
               state_msg = "車輛需要放電"; break;
             case OPENEVSE_STATE_DIODE_CHECK_FAILED:
@@ -410,16 +471,16 @@ void loop()
             while (true)
               delay(10);
           } else {
-            bool locked = true;
+            
             if ( (vflags & OPENEVSE_VFLAG_AUTH_LOCKED) == OPENEVSE_VFLAG_AUTH_LOCKED) {
-              locked = true;
+              isLocked = true;
             } else {
-              locked = false;
+              isLocked = false;
             }
 
             scr.normalDrawPlugStatus(state_msg);
             
-            if (locked) {
+            if (isLocked) {
               scr.normalDrawDeviceStatus(true, 0);
             } else {
               struct tm timeinfo;
@@ -429,11 +490,11 @@ void loop()
 
               if (epochValidUntil <= now) {
                 rapiSender.sendCmd("$S4 1");
+                lastAuthenCard = "";
               } else {
                 lock_countdown = epochValidUntil - now;
                 scr.normalDrawDeviceStatus(false, lock_countdown);
               }
-              
             }
           }
         }
@@ -451,9 +512,42 @@ void loop()
           lastAmps = amps;
         }
       });
+      OpenEVSE.getEnergy([](int ret, double session_wh, double total_kwh) {
+        if (RAPI_RESPONSE_OK == ret) {
+          if (lastSessionWatts != session_wh) {
+            scr.normalDrawConcurrentWatts(session_wh);
+          }
+
+          /*
+          if (lastTotalWatts != total_kwh) {
+            scr.normalDrawTotalWatts(total_kwh);
+          }
+          */
+
+          lastSessionWatts = session_wh;
+          lastTotalWatts = total_kwh;
+        }
+      }); 
+      if (evseVersion == "") {
+        OpenEVSE.getVersion([](int ret, const char* firmware, const char* protocol) {
+          if (RAPI_RESPONSE_OK == ret) {
+            evseVersion = String(firmware);
+            evseProtocol = String(protocol);
+          }
+        });
+      }
+       /* 充電電流判定 */
+      OpenEVSE.getCurrentCapacity([](int ret, long min_current, long pilot, long max_configured_current, long max_hardware_current){
+        if (RAPI_RESPONSE_OK == ret) {
+          
+            maxAmps = max_configured_current;
+           
+          }
+      });
     }
     else
     {
+
       OpenEVSE.begin(rapiSender, [](bool connected)
       {
         if(connected)
@@ -465,15 +559,62 @@ void loop()
       });
     }
   }
-  scr.normalDrawDateTime();
-  
+
+  // 溫度
+  sensors_event_t event;
+  tempSensor.getEvent(&event);
+  scr.normalDrawTemp(event.temperature);
+  //scr.normalDrawDateTime();
+
+  if (lastIsCharging == true && isCharging == false) {
+    // 從充電 -> 不充電 ==> 充電結束鎖定
+    log_e("From CHARGING to NOTCHARGING");
+    lastRecord.chargeStopAt = (millis()/1000);
+    lastRecord.usedWatt = lastSessionWatts;
+    locRec.append(lastRecord);
+    
+    locRec.dumpRecords();
+
+    if (locRec.isFull()) {
+      // 滿五次
+      rapiSender.sendCmd("$FD");
+      log_e("[Record] Disable on records full");
+    }
+  } else if (lastIsCharging == false && isCharging == true) {
+    // 從非充電 -> 充電 ==> 充電起始
+    log_e("From NOTCHARGING to CHARGING");
+    lastRecord.chargeStartAt = (millis()/1000);
+    lastRecord.cardId = lastAuthenCard;
+  } else {
+    //log_e("CHARGING Status= %s",isCharging? "true": "false" );
+  }
+  lastIsCharging = isCharging;
+
+  if (lastIsConnected == true && isConnected == false) {
+    log_e("Plug From CONNECTED to DISCONNECTED");
+  } else if (lastIsConnected == false && isConnected == true) {
+    log_e("Plug From DISCONNECT to CONNECTED");
+  } else {
+    //log_e("Plug Status= %s", isConnected? "true": "false" );
+  }
+  lastIsConnected = isConnected;
+
+  // 斷線後無論如何都是 8A
+  if (((millis()/1000) - lastConnectTime > DISCONNECT_INTERVAL) && isConnectEMS) {
+    rapiSender.sendCmd("$SC 8 V");
+    log_e("[WARNING] Drop load to 8A by DISCONNECT detection");
+    isConnectEMS = false;
+  }
+  else if(((millis()/1000) - lastConnectTime) < DISCONNECT_INTERVAL)
+  {
+    isConnectEMS = true;
+  }
+
   if ( !mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial() ) {
-    delay(10);
-    log_e("Nothing scanned");
+    delay(50);
     return;
   }
 
-  log_e("Something scanned");
   String card_uuid = mfrc522.GetCardIdString();
   log_e("Card ID: %s", card_uuid);
   bool checked = false;
@@ -483,13 +624,24 @@ void loop()
       checked = true;
     }
   }
-  checked = true;
 
   if (checked) {
+    log_e("Card ID: %s is valid", card_uuid);
     buzzer.Success();
-    rapiSender.sendCmd("$S4 0");
-    epochValidUntil = getTime()+180;
+    // 跟上一張一樣卡號的話, 鎖上
+    if (card_uuid == lastAuthenCard) {
+      log_e("From UNLOCK to LOCK");
+      rapiSender.sendCmd("$S4 1"); 
+      lastAuthenCard = "";
+      epochValidUntil=0;
+    } else {
+      log_e("From LOCK to UNLOCK");
+      rapiSender.sendCmd("$S4 0");
+      epochValidUntil = (millis()/1000)+180;
+      lastAuthenCard = card_uuid;
+    }
   } else {
+    log_e("Card ID: %s is invalid", card_uuid);
     buzzer.Fail();
     epochValidUntil=0;
   }
