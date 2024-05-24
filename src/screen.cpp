@@ -240,12 +240,23 @@ void Screen::bootDrawStatu(String status)
 void Screen::bootDrawError(String error)
 {
     memorytolayer(2);
+    // 開機中框架畫面
+    _tft.fillScreen(RA8875_BLACK);
+    _tft.fillRect(0, 0, 480, 48, RA8875_GREEN);
+    _u8g2.setFontMode(2);
+    _u8g2.setFontDirection(0);
+    _u8g2.setForegroundColor(RA8875_BLUE);
+    _u8g2.setBackgroundColor(RA8875_GREEN);
+    _u8g2.setFont(cht_font_32);
+    _u8g2.setCursor(0, 40);
+    _u8g2.print("EVSE智慧型充電樁");
+
     _tft.fillRect(100, 120, 480, 160, RA8875_BLACK);
     _u8g2.setForegroundColor(RA8875_RED);
     _u8g2.setBackgroundColor(RA8875_BLACK);
     _u8g2.setCursor(100, 160);
     _u8g2.setFont(cht_font_24);
-    _u8g2.print("開機失敗 => " + error);
+    _u8g2.print("偵測到錯誤 => " + error);
     _u8g2.setCursor(100, 200);
     _u8g2.setFont(cht_font_24);
     _u8g2.print("請嘗試重新開機，或聯繫管理員");
@@ -334,7 +345,9 @@ void Screen::normalDrawTotalWatts(double watts)
     _u8g2.setBackgroundColor(RA8875_BLACK);
     _u8g2.setFont(cht_font_24);
     _u8g2.setCursor(250, 148);
-    _u8g2.print("總度數: " + String(watts) + " kwh");
+    int kwatts = watts/1000;
+    _u8g2.print("總度數: " + String(kwatts) + " kwh");
+    _u8g2.print("MaxAmps : " + String(watts) + " A");
     btememorycopy(2,0,0,1,0,0,480,272);
 }
 
@@ -385,10 +398,20 @@ void Screen::normalDrawDateTime()
     btememorycopy(2,0,0,1,0,0,480,272);
 }
 
-void Screen::normalDrawDeviceStatus(bool locked, unsigned long count) {
+void Screen::normalDrawDeviceStatus(bool AUTHbycard, bool lockbyEMS) {
     memorytolayer(2);
-    if (locked) {
-        _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
+    if (AUTHbycard && !lockbyEMS) {
+         _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
+        _u8g2.setForegroundColor(RA8875_BLUE);
+        _u8g2.setBackgroundColor(RA8875_CYAN);
+        _u8g2.setFont(cht_font_32);
+        _u8g2.setCursor(10, 92);
+        _u8g2.print("設備開放中");
+        _tft.fillRect(0, 96, 240, 48, RA8875_CYAN);
+    } 
+    else if (!AUTHbycard && !lockbyEMS )
+    {
+         _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
         _u8g2.setForegroundColor(RA8875_RED);
         _u8g2.setBackgroundColor(RA8875_CYAN);
         _u8g2.setFont(cht_font_32);
@@ -400,21 +423,26 @@ void Screen::normalDrawDeviceStatus(bool locked, unsigned long count) {
         _u8g2.setFont(cht_font_24);
         _u8g2.setCursor(10, 132);
         _u8g2.print("請刷卡解鎖");
-    } 
-    else 
+        // _u8g2.setForegroundColor(RA8875_BLACK);
+        // _u8g2.setBackgroundColor(RA8875_CYAN);
+        // _u8g2.setFont(cht_font_24);
+        // _u8g2.setCursor(10, 132);
+        // _u8g2.print("鎖定倒數: " + String(count) + " 秒");
+    }
+    else if (lockbyEMS)
     {
-        _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
-        _u8g2.setForegroundColor(RA8875_GREEN);
+         _tft.fillRect(0, 48, 240, 64, RA8875_CYAN);
+        _u8g2.setForegroundColor(RA8875_RED);
         _u8g2.setBackgroundColor(RA8875_CYAN);
         _u8g2.setFont(cht_font_32);
         _u8g2.setCursor(10, 92);
-        _u8g2.print("設備開放中");
+        _u8g2.print("設備鎖定中");
         _tft.fillRect(0, 96, 240, 48, RA8875_CYAN);
         _u8g2.setForegroundColor(RA8875_BLACK);
         _u8g2.setBackgroundColor(RA8875_CYAN);
         _u8g2.setFont(cht_font_24);
         _u8g2.setCursor(10, 132);
-        _u8g2.print("鎖定倒數: " + String(count) + " 秒");
+        _u8g2.print("EMS系統鎖定中");
     }
     btememorycopy(2,0,0,1,0,0,480,272);
 }

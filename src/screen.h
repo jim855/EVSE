@@ -22,7 +22,7 @@ class Screen {
         void normalDrawDateTime(String date, String time);
         
         void normalDrawDateTime();
-        void normalDrawDeviceStatus(bool locked, unsigned long count);
+        void normalDrawDeviceStatus(bool AUTHbycard, bool lockbyEMS);
         void normalDrawDeviceWait();
         void normalDrawDeviceMessage(String message, bool isError);
         

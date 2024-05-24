@@ -44,6 +44,7 @@ unsigned long epochValidUntil=0;
 bool isCharging = false, lastIsCharging = false;
 bool isConnected = false, lastIsConnected = false;
 bool isConnectEMS = false;
+bool isRecordFull = true;
 String lastAuthenCard = "";
 String evseVersion = "", evseProtocol="";
 bool isLocked = true;
@@ -80,6 +81,7 @@ void apiHandleOff() {
 }
 
 void apiHandleInfo() {
+  lastConnectTime = (millis()/1000);
   String result = "{";
   result = result + "\"amps\":" + String(lastAmps) + ",";
   result = result + "\"volts\":" + String(lastVolts) + ",";
@@ -216,10 +218,14 @@ void apiHandleSetName() {
 }
 
 void apiHandleRecord() {
-  rapiSender.sendCmd("$FE");
+  if (isRecordFull == true){
+    log_e("evse_tuneOn");
+    rapiSender.sendCmd("$FE");
+    isRecordFull = false;
+  }
   log_e("[Record] Enabled by flush records");
   locRec.dumpRecords();
-  lastConnectTime = (millis()/1000);
+  //lastConnectTime = (millis()/1000);
   server.send(200, F("application/json"), locRec.getJsonRecords());
 }
 
@@ -231,9 +237,8 @@ void setup()
     delay(500);
   scr.begin(RA8875_480x272);
 
-  //rapiSender.sendCmd("$FD");
+  rapiSender.sendCmd("$FD");
   rapiSender.sendCmd("$S4 0");
-  rapiSender.sendCmd("$SV 220000");
 
   scr.bootDrawFrame();
   scr.bootDrawStatu("設定腳位");
@@ -387,7 +392,7 @@ void setup()
   vTaskDelay(200);
   // Normal mode
   scr.normalDrawFrame(eth_mac, eth_ip, setting.name);
-  scr.normalDrawDeviceStatus(isAuthByCard,!isLocked);
+  scr.normalDrawDeviceStatus(isAuthByCard,isLocked);
   buzzer.Success();
 
 }
@@ -408,11 +413,11 @@ void loop()
         if(RAPI_RESPONSE_OK == ret)
         {
           if(evse_state==OPENEVSE_STATE_CHARGING){
-            digitalWrite(LED2,HIGH);
+            digitalWrite(LED3,HIGH);
           }
           else
           {
-            digitalWrite(LED2,LOW);
+            digitalWrite(LED3,LOW);
           }
           String state_msg;
           bool failed = false;
@@ -471,14 +476,14 @@ void loop()
               failed = true;
               break;
           }
-          if (failed) {
-            log_e("發生錯誤");
-            rapiSender.sendCmd("$FD");
-            scr.bootDrawFrame();
-            scr.bootDrawError(state_msg);
-            while (true)
-              delay(10);
-          } else {
+          // if (failed) {
+          //   log_e("發生錯誤");
+          //   rapiSender.sendCmd("$FD");
+          //   scr.bootDrawFrame();
+          //   scr.bootDrawError(state_msg);
+            // while (true)
+            //   delay(10);
+          //} else {
             
             // if ( (vflags & OPENEVSE_VFLAG_AUTH_LOCKED) == OPENEVSE_VFLAG_AUTH_LOCKED) {
             //   isLocked = true;
@@ -506,7 +511,7 @@ void loop()
               }
               */
             //}
-          }
+          //}
         }
       });
       OpenEVSE.getChargeCurrentAndVoltage([](int ret, double amps, double volts) {
@@ -576,7 +581,7 @@ void loop()
   sensors_event_t event;
   tempSensor.getEvent(&event);
   scr.normalDrawTemp(event.temperature);
-  scr.normalDrawDeviceStatus(isAuthByCard,!isLocked);
+  scr.normalDrawDeviceStatus(isAuthByCard,isLocked);
   // if (voltageSensor1.getRmsVoltage()<150)
   // {
   //   voltageSensor1.setSensitivity(576);
@@ -602,6 +607,7 @@ void loop()
 
     if (locRec.isFull()) {
       // 滿五次
+      isRecordFull = true;
       rapiSender.sendCmd("$FD");
       log_e("[Record] Disable on records full");
     }
@@ -634,10 +640,12 @@ void loop()
     rapiSender.sendCmd("$SC 8 V");
     log_e("[WARNING] Drop load to 8A by DISCONNECT detection");
     isConnectEMS = false;
+    digitalWrite(LED2,LOW);
   }
   else if(((millis()/1000) - lastConnectTime) < DISCONNECT_INTERVAL)
   {
     isConnectEMS = true;
+    digitalWrite(LED2,HIGH);
   }
 
   if ( !wg.available() || !isConnected || isLocked) {
@@ -662,14 +670,14 @@ void loop()
     if (card_uuid == lastAuthenCard) {
       log_e("From UNLOCK to LOCK");
       isAuthByCard = false;
-      scr.normalDrawDeviceStatus(isAuthByCard,!isLocked);
+      scr.normalDrawDeviceStatus(isAuthByCard,isLocked);
       rapiSender.sendCmd("$S4 1"); 
       lastAuthenCard = "";
       //epochValidUntil=0;
     } else {
       log_e("From LOCK to UNLOCK");
       isAuthByCard = true;
-      scr.normalDrawDeviceStatus(isAuthByCard,!isLocked);
+      scr.normalDrawDeviceStatus(isAuthByCard,isLocked);
       rapiSender.sendCmd("$S4 0");
       //epochValidUntil = (millis()/1000)+180;
       lastAuthenCard = card_uuid;
@@ -680,5 +688,5 @@ void loop()
     epochValidUntil=0;
   }
 
-  vTaskDelay(1000);
+  vTaskDelay(100);
 }
